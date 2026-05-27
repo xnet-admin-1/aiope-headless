@@ -199,6 +199,7 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /api/totp/setup", s.handleTOTPSetup)
 		mux.HandleFunc("POST /api/totp/verify", s.handleTOTPVerify)
 		mux.HandleFunc("POST /api/totp/disable", s.handleTOTPDisable)
+		mux.HandleFunc("POST /api/password", s.handlePasswordChange)
 		return s.authMiddleware(mux)
 	}
 	return mux
@@ -318,10 +319,35 @@ func (s *Server) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"ok":true}`))
 }
 
+func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("aiope_session")
+	if err != nil || cookie.Value != s.sessionToken {
+		http.Error(w, `{"error":"unauthorized"}`, 401)
+		return
+	}
+	var req struct {
+		Current string `json:"current"`
+		New     string `json:"new"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	if req.Current != s.Password {
+		http.Error(w, `{"error":"current password incorrect"}`, 401)
+		return
+	}
+	if len(req.New) < 6 {
+		http.Error(w, `{"error":"password must be at least 6 characters"}`, 400)
+		return
+	}
+	s.Password = req.New
+	// Persist to DB so it survives restarts
+	s.DB.Exec("INSERT OR REPLACE INTO settings_kv(key,value) VALUES('password',?)", req.New)
+	w.Write([]byte(`{"ok":true}`))
+}
+
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Allow login endpoint and static login page
-		if r.URL.Path == "/api/login" || r.URL.Path == "/login" || r.URL.Path == "/api/totp/setup" || r.URL.Path == "/api/totp/verify" || r.URL.Path == "/api/totp/disable" {
+		if r.URL.Path == "/api/login" || r.URL.Path == "/login" || r.URL.Path == "/api/totp/setup" || r.URL.Path == "/api/totp/verify" || r.URL.Path == "/api/totp/disable" || r.URL.Path == "/api/password" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -1663,7 +1689,8 @@ func (s *Server) refreshProvider() {
 
 	// Try gateway router first — resolves model to correct upstream
 	if s.Gateway != nil {
-		if oai, _, err := s.Gateway.Resolve(p.SelectedModelID); err == nil {
+		if oai, resolvedModel, err := s.Gateway.Resolve(p.SelectedModelID); err == nil {
+			s.Model = resolvedModel
 			if mc, ok := p.ModelConfigs[p.SelectedModelID]; ok {
 				oai.Temperature = mc.Temperature
 				oai.TopP = mc.TopP

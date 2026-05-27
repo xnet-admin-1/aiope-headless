@@ -81,6 +81,12 @@ func main() {
 		BasePath:      cfg.BasePath,
 	}
 
+	// Load password from DB if changed via UI
+	var dbPw string
+	if database.QueryRow("SELECT value FROM settings_kv WHERE key='password'").Scan(&dbPw) == nil && dbPw != "" {
+		srv.Password = dbPw
+	}
+
 	log.Fatal(server.ListenAndServe(cfg.Bind, cfg.Port, srv.Handler()))
 }
 

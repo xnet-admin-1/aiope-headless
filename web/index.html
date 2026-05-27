@@ -1091,6 +1091,13 @@ async function renderSecuritySettings(){
   const body=document.getElementById('settingsBody');
   body.innerHTML=`
     <div style="margin-bottom:24px">
+      <h4 style="margin:0 0 12px">Change Password</h4>
+      <div class="field"><label>Current Password</label><input type="password" id="sec_curpw"></div>
+      <div class="field"><label>New Password</label><input type="password" id="sec_newpw"></div>
+      <button class="btn-primary" onclick="changePassword()" style="margin-top:8px">Update Password</button>
+      <div id="pwMsg" style="font-size:12px;margin-top:8px;display:none"></div>
+    </div>
+    <div style="margin-bottom:24px">
       <h4 style="margin:0 0 12px">TOTP Two-Factor Authentication</h4>
       <div id="totpStatus">Checking...</div>
     </div>
@@ -1141,6 +1148,16 @@ async function disableTotp(){
   if(!confirm('Disable TOTP 2FA?'))return;
   await fetch('/api/totp/disable',{method:'POST'});
   renderSecuritySettings();
+}
+
+async function changePassword(){
+  const cur=document.getElementById('sec_curpw').value;
+  const nw=document.getElementById('sec_newpw').value;
+  const msg=document.getElementById('pwMsg');
+  const r=await fetch('/api/password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current:cur,new:nw})});
+  msg.style.display='block';
+  if(r.ok){msg.style.color='var(--success)';msg.textContent='Password updated';document.getElementById('sec_curpw').value='';document.getElementById('sec_newpw').value=''}
+  else{const e=await r.json().catch(()=>({}));msg.style.color='#ff6b6b';msg.textContent=e.error||'Failed'}
 }
 
 function setTheme(mode){
