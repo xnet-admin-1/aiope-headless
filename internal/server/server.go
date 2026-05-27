@@ -35,6 +35,7 @@ import (
 	"github.com/XNet-NGO/AIOPE-Headless/internal/ws"
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
+	"github.com/pquerna/otp/totp"
 )
 
 const defaultSystemPrompt = `## Identity
@@ -195,18 +196,49 @@ func (s *Server) Handler() http.Handler {
 	if s.Password != "" {
 		s.sessionToken = uuid.NewString()
 		mux.HandleFunc("POST /api/login", s.handleLogin)
+		mux.HandleFunc("GET /api/totp/setup", s.handleTOTPSetup)
+		mux.HandleFunc("POST /api/totp/verify", s.handleTOTPVerify)
 		return s.authMiddleware(mux)
 	}
 	return mux
 }
 
+func (s *Server) totpSecret() string {
+	var secret string
+	s.DB.QueryRow("SELECT value FROM settings_kv WHERE key='totp_secret'").Scan(&secret)
+	return secret
+}
+
+func (s *Server) totpEnabled() bool {
+	return s.totpSecret() != ""
+}
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	var req struct{ Password string }
+	var req struct {
+		Password string `json:"password"`
+		Code     string `json:"code"`
+	}
 	json.NewDecoder(r.Body).Decode(&req)
 	if req.Password != s.Password {
 		http.Error(w, `{"error":"invalid password"}`, 401)
 		return
 	}
+
+	// If TOTP is enabled, require code
+	if s.totpEnabled() {
+		if req.Code == "" {
+			// Password OK but need TOTP — tell client
+			w.WriteHeader(200)
+			w.Write([]byte(`{"needTotp":true}`))
+			return
+		}
+		valid := totp.Validate(req.Code, s.totpSecret())
+		if !valid {
+			http.Error(w, `{"error":"invalid TOTP code"}`, 401)
+			return
+		}
+	}
+
 	http.SetCookie(w, &http.Cookie{
 		Name:     "aiope_session",
 		Value:    s.sessionToken,
@@ -219,10 +251,65 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"ok":true}`))
 }
 
+func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
+	// Only allow if already authenticated
+	cookie, err := r.Cookie("aiope_session")
+	if err != nil || cookie.Value != s.sessionToken {
+		http.Error(w, `{"error":"unauthorized"}`, 401)
+		return
+	}
+
+	if s.totpEnabled() {
+		w.Write([]byte(`{"enabled":true}`))
+		return
+	}
+
+	key, err := totp.Generate(totp.GenerateOpts{
+		Issuer:      "AgentX",
+		AccountName: "user-x@agentx.fxcb3.dev",
+	})
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	// Store secret temporarily — confirmed on verify
+	s.DB.Exec("INSERT OR REPLACE INTO settings_kv(key,value) VALUES('totp_pending',?)", key.Secret())
+	writeJSON(w, map[string]string{"secret": key.Secret(), "url": key.URL()})
+}
+
+func (s *Server) handleTOTPVerify(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("aiope_session")
+	if err != nil || cookie.Value != s.sessionToken {
+		http.Error(w, `{"error":"unauthorized"}`, 401)
+		return
+	}
+
+	var req struct{ Code string }
+	json.NewDecoder(r.Body).Decode(&req)
+
+	var pending string
+	s.DB.QueryRow("SELECT value FROM settings_kv WHERE key='totp_pending'").Scan(&pending)
+	if pending == "" {
+		http.Error(w, `{"error":"no pending TOTP setup"}`, 400)
+		return
+	}
+
+	if !totp.Validate(req.Code, pending) {
+		http.Error(w, `{"error":"invalid code"}`, 401)
+		return
+	}
+
+	// Confirmed — save as active secret
+	s.DB.Exec("INSERT OR REPLACE INTO settings_kv(key,value) VALUES('totp_secret',?)", pending)
+	s.DB.Exec("DELETE FROM settings_kv WHERE key='totp_pending'")
+	w.Write([]byte(`{"ok":true}`))
+}
+
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Allow login endpoint and static login page
-		if r.URL.Path == "/api/login" || r.URL.Path == "/login" {
+		if r.URL.Path == "/api/login" || r.URL.Path == "/login" || r.URL.Path == "/api/totp/setup" || r.URL.Path == "/api/totp/verify" {
 			next.ServeHTTP(w, r)
 			return
 		}

@@ -16,19 +16,40 @@ button:hover{background:#5a52d5}
 </head><body>
 <div class="login">
 <h1>🔒 AIOPE</h1>
-<div class="err" id="err">Invalid password</div>
+<div class="err" id="err">Invalid credentials</div>
 <form onsubmit="return login(event)">
 <input type="password" id="pw" placeholder="Password" autofocus>
+<input type="text" id="totp" placeholder="TOTP Code" style="display:none" autocomplete="one-time-code" inputmode="numeric" maxlength="6">
 <button type="submit">Sign In</button>
 </form>
 </div>
 <script>
+let needTotp=false;
 async function login(e){
   e.preventDefault();
   const base=window.location.pathname.replace(/\/login\/?$/,'');
-  const r=await fetch(base+'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:document.getElementById('pw').value})});
-  if(r.ok){window.location.href=base+'/'}
-  else{document.getElementById('err').style.display='block';document.getElementById('pw').value=''}
+  const body={password:document.getElementById('pw').value};
+  if(needTotp)body.code=document.getElementById('totp').value;
+  const r=await fetch(base+'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(r.ok){
+    const d=await r.json();
+    if(d.needTotp){
+      needTotp=true;
+      document.getElementById('totp').style.display='block';
+      document.getElementById('totp').focus();
+      document.getElementById('err').textContent='Enter TOTP code';
+      document.getElementById('err').style.display='block';
+      document.getElementById('err').style.color='#6c63ff';
+      return false;
+    }
+    window.location.href=base+'/';
+  } else {
+    document.getElementById('err').textContent='Invalid credentials';
+    document.getElementById('err').style.color='#ff6b6b';
+    document.getElementById('err').style.display='block';
+    if(needTotp)document.getElementById('totp').value='';
+    else document.getElementById('pw').value='';
+  }
   return false;
 }
 </script>
