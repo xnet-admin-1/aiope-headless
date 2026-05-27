@@ -18,6 +18,7 @@ import (
 	"github.com/XNet-NGO/AIOPE-Headless/internal/remote"
 	"github.com/XNet-NGO/AIOPE-Headless/internal/server"
 	"github.com/XNet-NGO/AIOPE-Headless/internal/settings"
+	"github.com/XNet-NGO/AIOPE-Headless/internal/vecstore"
 	"github.com/XNet-NGO/AIOPE-Headless/internal/ws"
 )
 
@@ -64,6 +65,9 @@ func main() {
 	remoteSvc := remote.NewService(database)
 	remoteSvc.SeedFromSSHConfig()
 
+	vs := &vecstore.VecStore{DB: database, EmbedURL: "http://localhost:8091"}
+	vs.Init()
+
 	srv := &server.Server{
 		Conversations: &conversation.Service{DB: database},
 		Messages:      &message.Service{DB: database},
@@ -77,6 +81,7 @@ func main() {
 		MCP:           mcp.NewManager(database),
 		Remote:        remoteSvc,
 		Gateway:       gwRouter,
+		VecStore:      vs,
 		Password:      cfg.Password,
 		BasePath:      cfg.BasePath,
 	}

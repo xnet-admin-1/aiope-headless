@@ -32,6 +32,7 @@ import (
 	"github.com/XNet-NGO/AIOPE-Headless/internal/remote"
 	"github.com/XNet-NGO/AIOPE-Headless/internal/settings"
 	"github.com/XNet-NGO/AIOPE-Headless/internal/terminal"
+	"github.com/XNet-NGO/AIOPE-Headless/internal/vecstore"
 	"github.com/XNet-NGO/AIOPE-Headless/internal/ws"
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
@@ -87,6 +88,7 @@ type Server struct {
 	MCP           *mcp.Manager
 	Remote        *remote.Service
 	Gateway       *gateway.Router
+	VecStore      *vecstore.VecStore
 	Password      string
 	BasePath      string
 	sessionToken  string
@@ -174,6 +176,14 @@ func (s *Server) Handler() http.Handler {
 	// File browser
 	mux.HandleFunc("GET /api/files", s.listFiles)
 	mux.HandleFunc("GET /api/files/read", s.readFileContent)
+
+	// Vectors
+	mux.HandleFunc("GET /api/vectors/stats", s.vecStats)
+	mux.HandleFunc("POST /api/vectors/search", s.vecSearch)
+	mux.HandleFunc("POST /api/vectors/add", s.vecAdd)
+	mux.HandleFunc("DELETE /api/vectors", s.vecDelete)
+	mux.HandleFunc("GET /api/vectors", s.vecList)
+	mux.HandleFunc("POST /api/vectors/reindex", s.vecReindex)
 
 	// Connectivity check
 	mux.HandleFunc("GET /api/check", s.checkConnectivity)
@@ -2170,4 +2180,84 @@ func noCacheHandler(h http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		h.ServeHTTP(w, r)
 	})
+}
+
+// Vector store handlers
+func (s *Server) vecStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := s.VecStore.Stats()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	writeJSON(w, stats)
+}
+
+func (s *Server) vecSearch(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Query    string `json:"query"`
+		K        int    `json:"k"`
+		Category string `json:"category"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	if req.K <= 0 {
+		req.K = 5
+	}
+	results, err := s.VecStore.Search(req.Query, req.K, req.Category)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	writeJSON(w, results)
+}
+
+func (s *Server) vecAdd(w http.ResponseWriter, r *http.Request) {
+	var doc vecstore.Document
+	json.NewDecoder(r.Body).Decode(&doc)
+	if doc.Content == "" {
+		http.Error(w, "content required", 400)
+		return
+	}
+	if err := s.VecStore.Add(doc); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+func (s *Server) vecDelete(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, "id required", 400)
+		return
+	}
+	if err := s.VecStore.Delete(id); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+func (s *Server) vecList(w http.ResponseWriter, r *http.Request) {
+	category := r.URL.Query().Get("category")
+	limit := 50
+	if l := r.URL.Query().Get("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+	docs, err := s.VecStore.List(category, limit)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	if docs == nil {
+		docs = []vecstore.Document{}
+	}
+	writeJSON(w, docs)
+}
+
+func (s *Server) vecReindex(w http.ResponseWriter, r *http.Request) {
+	if err := s.VecStore.Reindex(); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "ok"})
 }

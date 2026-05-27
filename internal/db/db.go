@@ -6,7 +6,7 @@ import (
 	"database/sql"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
+	_ "github.com/asg017/sqlite-vec-go-bindings/ncruces"
 )
 
 //go:embed schema.sql

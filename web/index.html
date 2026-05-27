@@ -255,6 +255,7 @@ select.msg-act option{background:var(--card-bg);color:var(--text-primary)}
       <div class="modal-tab" onclick="settingsTab('mcp')">MCP</div>
       <div class="modal-tab" onclick="settingsTab('tools')">Tools</div>
       <div class="modal-tab" onclick="settingsTab('agent')">Agent</div>
+      <div class="modal-tab" onclick="settingsTab('knowledge')">Knowledge</div>
       <div class="modal-tab" onclick="settingsTab('theme')">Theme</div>
       <div class="modal-tab" onclick="settingsTab('security')">Security</div>
       <div class="modal-tab" onclick="settingsTab('export')">Backup</div>
@@ -700,7 +701,7 @@ function closeSettings(){document.getElementById('settingsModal').classList.remo
 
 function settingsTab(name){
   settingsTabName=name;
-  const tabMap={providers:'Providers',tasks:'Task Models',servers:'Servers',mcp:'MCP',tools:'Tools',agent:'Agent',theme:'Theme',export:'Backup'};
+  const tabMap={providers:'Providers',tasks:'Task Models',servers:'Servers',mcp:'MCP',tools:'Tools',agent:'Agent',knowledge:'Knowledge',theme:'Theme',export:'Backup'};
   document.querySelectorAll('.modal-tab').forEach(t=>t.classList.toggle('active',t.textContent===tabMap[name]));
   if(name==='providers')renderProviderSettings();
   else if(name==='tasks')renderTaskSettings();
@@ -708,6 +709,7 @@ function settingsTab(name){
   else if(name==='mcp')renderMcpSettings();
   else if(name==='tools')renderToolSettings();
   else if(name==='agent')renderAgentSettings();
+  else if(name==='knowledge')renderKnowledgeSettings();
   else if(name==='theme')renderThemeSettings();
   else if(name==='security')renderSecuritySettings();
   else if(name==='export')renderExportSettings();
@@ -1073,6 +1075,59 @@ async function doImport(input){
     document.getElementById('importStatus').textContent='Error: '+e.message;
     document.getElementById('importStatus').style.color='var(--error)';
   }
+}
+
+async function renderKnowledgeSettings(){
+  const body=document.getElementById('settingsBody');
+  const stats=await api.get('/api/vectors/stats')||{};
+  const docs=await api.get('/api/vectors')||[];
+  body.innerHTML=`
+    <div style="margin-bottom:16px"><strong>Stats:</strong> ${Object.entries(stats).map(([k,v])=>`${esc(k)}: ${v}`).join(', ')||'empty'}</div>
+    <div style="margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--outline)">
+      <h4 style="margin:0 0 8px">Add Document</h4>
+      <textarea id="kb_content" rows="3" style="width:100%;margin-bottom:8px" placeholder="Content..."></textarea>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="kb_source" placeholder="Source (file, URL, memory)" style="flex:1">
+        <select id="kb_category"><option>document</option><option>conversation</option><option>note</option></select>
+        <button class="btn-primary" onclick="kbAdd()">Add</button>
+      </div>
+    </div>
+    <div style="margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--outline)">
+      <h4 style="margin:0 0 8px">Search</h4>
+      <div style="display:flex;gap:8px"><input id="kb_query" placeholder="Search query..." style="flex:1"><button class="btn-primary" onclick="kbSearch()">Search</button></div>
+      <div id="kb_results" style="margin-top:8px;font-size:13px"></div>
+    </div>
+    <h4 style="margin:0 0 8px">Documents (${docs.length})</h4>
+    <div style="max-height:300px;overflow-y:auto">${docs.map(d=>`
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--outline)">
+        <div style="flex:1;min-width:0"><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px">${esc(d.content.slice(0,100))}</div><div style="font-size:11px;color:var(--text-secondary)">${esc(d.category)} · ${esc(d.source)}</div></div>
+        <button onclick="kbDelete('${esc(d.id)}')" style="margin-left:8px;font-size:11px;padding:2px 6px">×</button>
+      </div>`).join('')||'<em>No documents</em>'}
+    </div>
+    <button onclick="kbReindex()" style="margin-top:12px">Re-index All</button>`;
+}
+async function kbAdd(){
+  const content=document.getElementById('kb_content').value.trim();
+  const source=document.getElementById('kb_source').value.trim()||'manual';
+  const category=document.getElementById('kb_category').value;
+  if(!content){alert('Content required');return}
+  await api.post('/api/vectors/add',{content,source,category});
+  renderKnowledgeSettings();
+}
+async function kbDelete(id){
+  await api.del('/api/vectors?id='+encodeURIComponent(id));
+  renderKnowledgeSettings();
+}
+async function kbSearch(){
+  const query=document.getElementById('kb_query').value.trim();
+  if(!query)return;
+  const resp=await api.post('/api/vectors/search',{query,k:5});
+  const results=resp&&resp.ok?await resp.json():[];
+  document.getElementById('kb_results').innerHTML=results.map(r=>`<div style="padding:4px 0;border-bottom:1px solid var(--outline)"><div style="font-size:12px">${esc(r.content.slice(0,150))}</div><div style="font-size:11px;color:var(--text-secondary)">dist: ${r.distance.toFixed(4)} · ${esc(r.category)} · ${esc(r.source)}</div></div>`).join('')||'<em>No results</em>';
+}
+async function kbReindex(){
+  await api.post('/api/vectors/reindex');
+  alert('Reindex complete');
 }
 
 function renderThemeSettings(){
