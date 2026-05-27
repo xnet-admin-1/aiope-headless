@@ -256,6 +256,7 @@ select.msg-act option{background:var(--card-bg);color:var(--text-primary)}
       <div class="modal-tab" onclick="settingsTab('tools')">Tools</div>
       <div class="modal-tab" onclick="settingsTab('agent')">Agent</div>
       <div class="modal-tab" onclick="settingsTab('theme')">Theme</div>
+      <div class="modal-tab" onclick="settingsTab('security')">Security</div>
       <div class="modal-tab" onclick="settingsTab('export')">Backup</div>
     </div>
     <div class="modal-body" id="settingsBody"></div>
@@ -708,6 +709,7 @@ function settingsTab(name){
   else if(name==='tools')renderToolSettings();
   else if(name==='agent')renderAgentSettings();
   else if(name==='theme')renderThemeSettings();
+  else if(name==='security')renderSecuritySettings();
   else if(name==='export')renderExportSettings();
 }
 
@@ -1083,6 +1085,62 @@ function renderThemeSettings(){
       ${current===t?'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="3" style="vertical-align:-1px"><polyline points="20 6 9 17 4 12"/></svg>':''}
     </div>`
   ).join('');
+}
+
+async function renderSecuritySettings(){
+  const body=document.getElementById('settingsBody');
+  body.innerHTML=`
+    <div style="margin-bottom:24px">
+      <h4 style="margin:0 0 12px">TOTP Two-Factor Authentication</h4>
+      <div id="totpStatus">Checking...</div>
+    </div>
+    <div style="margin-bottom:24px">
+      <h4 style="margin:0 0 12px">Session</h4>
+      <button class="btn-primary" onclick="if(confirm('Log out?')){document.cookie='aiope_session=;path=/;max-age=0';location.href='/login'}">Log Out</button>
+    </div>`;
+  // Check TOTP status
+  try{
+    const r=await api.get('/api/totp/setup');
+    if(r.enabled){
+      document.getElementById('totpStatus').innerHTML='<span style="color:var(--success)">✓ TOTP enabled</span><br><button class="btn-primary" style="margin-top:8px" onclick="disableTotp()">Disable TOTP</button>';
+    }else{
+      document.getElementById('totpStatus').innerHTML=`
+        <p style="margin-bottom:8px;color:var(--text-secondary)">Not configured. Set up TOTP for 2FA.</p>
+        <button class="btn-primary" onclick="setupTotp()">Set Up TOTP</button>
+        <div id="totpSetup" style="display:none;margin-top:16px"></div>`;
+    }
+  }catch(e){document.getElementById('totpStatus').textContent='Error loading TOTP status'}
+}
+
+async function setupTotp(){
+  const r=await api.get('/api/totp/setup');
+  if(r.secret){
+    document.getElementById('totpSetup').style.display='block';
+    document.getElementById('totpSetup').innerHTML=`
+      <p style="margin-bottom:8px">Add to your authenticator app:</p>
+      <code style="display:block;padding:8px;background:var(--surface-variant);border-radius:4px;word-break:break-all;margin-bottom:12px;font-size:12px">${r.secret}</code>
+      <p style="margin-bottom:8px;font-size:12px;color:var(--text-secondary)">Or use URI: ${r.url}</p>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="totpConfirm" placeholder="Enter 6-digit code" maxlength="6" inputmode="numeric" style="padding:8px;border:1px solid var(--outline);border-radius:4px;background:var(--surface-variant);color:var(--text-primary);width:140px">
+        <button class="btn-primary" onclick="confirmTotp()">Verify</button>
+      </div>
+      <div id="totpErr" style="color:#ff6b6b;font-size:12px;margin-top:8px;display:none"></div>`;
+  }
+}
+
+async function confirmTotp(){
+  const code=document.getElementById('totpConfirm').value;
+  try{
+    const r=await fetch('/api/totp/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});
+    if(r.ok){renderSecuritySettings()}
+    else{document.getElementById('totpErr').textContent='Invalid code';document.getElementById('totpErr').style.display='block'}
+  }catch(e){document.getElementById('totpErr').textContent='Error';document.getElementById('totpErr').style.display='block'}
+}
+
+async function disableTotp(){
+  if(!confirm('Disable TOTP 2FA?'))return;
+  await fetch('/api/totp/disable',{method:'POST'});
+  renderSecuritySettings();
 }
 
 function setTheme(mode){

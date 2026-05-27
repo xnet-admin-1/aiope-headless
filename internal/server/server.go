@@ -198,6 +198,7 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("POST /api/login", s.handleLogin)
 		mux.HandleFunc("GET /api/totp/setup", s.handleTOTPSetup)
 		mux.HandleFunc("POST /api/totp/verify", s.handleTOTPVerify)
+		mux.HandleFunc("POST /api/totp/disable", s.handleTOTPDisable)
 		return s.authMiddleware(mux)
 	}
 	return mux
@@ -306,10 +307,21 @@ func (s *Server) handleTOTPVerify(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"ok":true}`))
 }
 
+func (s *Server) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("aiope_session")
+	if err != nil || cookie.Value != s.sessionToken {
+		http.Error(w, `{"error":"unauthorized"}`, 401)
+		return
+	}
+	s.DB.Exec("DELETE FROM settings_kv WHERE key='totp_secret'")
+	s.DB.Exec("DELETE FROM settings_kv WHERE key='totp_pending'")
+	w.Write([]byte(`{"ok":true}`))
+}
+
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Allow login endpoint and static login page
-		if r.URL.Path == "/api/login" || r.URL.Path == "/login" || r.URL.Path == "/api/totp/setup" || r.URL.Path == "/api/totp/verify" {
+		if r.URL.Path == "/api/login" || r.URL.Path == "/login" || r.URL.Path == "/api/totp/setup" || r.URL.Path == "/api/totp/verify" || r.URL.Path == "/api/totp/disable" {
 			next.ServeHTTP(w, r)
 			return
 		}
