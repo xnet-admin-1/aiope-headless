@@ -10,6 +10,7 @@ import (
 	"github.com/XNet-NGO/AIOPE-Headless/internal/config"
 	"github.com/XNet-NGO/AIOPE-Headless/internal/conversation"
 	"github.com/XNet-NGO/AIOPE-Headless/internal/db"
+	"github.com/XNet-NGO/AIOPE-Headless/internal/gateway"
 	"github.com/XNet-NGO/AIOPE-Headless/internal/llm"
 	"github.com/XNet-NGO/AIOPE-Headless/internal/mcp"
 	"github.com/XNet-NGO/AIOPE-Headless/internal/message"
@@ -37,10 +38,21 @@ func main() {
 	if ps, _ := provSvc.List(); len(ps) == 0 {
 		seedDefaults(provSvc, database)
 	}
+
+	// Initialize gateway router
+	gwStore := &gateway.Store{DB: database}
+	gwStore.Init()
+	gwRouter := gateway.NewRouter(gwStore)
+
 	var prov llm.Provider
 	var model string
 	if active := provSvc.GetActive(); active != nil {
-		prov = &llm.OpenAI{APIKey: active.APIKey, APIBase: active.APIBase}
+		// Try gateway resolution first
+		if oai, _, err := gwRouter.Resolve(active.SelectedModelID); err == nil {
+			prov = oai
+		} else {
+			prov = &llm.OpenAI{APIKey: active.APIKey, APIBase: active.APIBase}
+		}
 		model = active.SelectedModelID
 	}
 	if prov == nil {
@@ -64,6 +76,7 @@ func main() {
 		DB:            database,
 		MCP:           mcp.NewManager(database),
 		Remote:        remoteSvc,
+		Gateway:       gwRouter,
 		Password:      cfg.Password,
 		BasePath:      cfg.BasePath,
 	}

@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/XNet-NGO/AIOPE-Headless/internal/conversation"
+	"github.com/XNet-NGO/AIOPE-Headless/internal/gateway"
 	"github.com/XNet-NGO/AIOPE-Headless/internal/llm"
 	"github.com/XNet-NGO/AIOPE-Headless/internal/mcp"
 	"github.com/XNet-NGO/AIOPE-Headless/internal/message"
@@ -84,6 +85,7 @@ type Server struct {
 	DB            *sql.DB
 	MCP           *mcp.Manager
 	Remote        *remote.Service
+	Gateway       *gateway.Router
 	Password      string
 	BasePath      string
 	sessionToken  string
@@ -1437,18 +1439,36 @@ func (s *Server) refreshProvider() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p := s.Providers.GetActive()
-	if p != nil {
-		oai := &llm.OpenAI{APIKey: p.APIKey, APIBase: p.APIBase}
-		if mc, ok := p.ModelConfigs[p.SelectedModelID]; ok {
-			oai.Temperature = mc.Temperature
-			oai.TopP = mc.TopP
-			oai.MaxTokens = mc.MaxTokens
-			oai.ReasoningEffort = mc.ReasoningEffort
-			oai.EndpointOverride = mc.EndpointOverride
-		}
-		s.Provider = oai
-		s.Model = p.SelectedModelID
+	if p == nil {
+		return
 	}
+	s.Model = p.SelectedModelID
+
+	// Try gateway router first — resolves model to correct upstream
+	if s.Gateway != nil {
+		if oai, _, err := s.Gateway.Resolve(p.SelectedModelID); err == nil {
+			if mc, ok := p.ModelConfigs[p.SelectedModelID]; ok {
+				oai.Temperature = mc.Temperature
+				oai.TopP = mc.TopP
+				oai.MaxTokens = mc.MaxTokens
+				oai.ReasoningEffort = mc.ReasoningEffort
+				oai.EndpointOverride = mc.EndpointOverride
+			}
+			s.Provider = oai
+			return
+		}
+	}
+
+	// Fallback: use profile's API base/key directly
+	oai := &llm.OpenAI{APIKey: p.APIKey, APIBase: p.APIBase}
+	if mc, ok := p.ModelConfigs[p.SelectedModelID]; ok {
+		oai.Temperature = mc.Temperature
+		oai.TopP = mc.TopP
+		oai.MaxTokens = mc.MaxTokens
+		oai.ReasoningEffort = mc.ReasoningEffort
+		oai.EndpointOverride = mc.EndpointOverride
+	}
+	s.Provider = oai
 }
 
 func encodeImageBase64(path string) (string, error) {
