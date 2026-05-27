@@ -3,6 +3,9 @@ package gateway
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"time"
 )
 
@@ -116,4 +119,40 @@ func (s *Store) SaveRoute(r *ModelRoute) error {
 func (s *Store) DeleteRoute(displayID string) error {
 	_, err := s.DB.Exec("DELETE FROM gateway_routes WHERE displayId=?", displayID)
 	return err
+}
+
+func (s *Store) DeleteRoutesByProvider(providerName string) error {
+	_, err := s.DB.Exec("DELETE FROM gateway_routes WHERE provider=?", providerName)
+	return err
+}
+
+func (s *Store) FetchUpstreamModels(p *ProviderConfig) ([]string, error) {
+	base := p.APIBase
+	if base == "" {
+		return nil, fmt.Errorf("no apiBase configured")
+	}
+	req, _ := http.NewRequest("GET", base+"/models", nil)
+	if p.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+p.APIKey)
+	}
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(b))
+	}
+	var result struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+	var out []string
+	for _, m := range result.Data {
+		out = append(out, m.ID)
+	}
+	return out, nil
 }

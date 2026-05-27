@@ -605,23 +605,29 @@ function send(){
 
 let modelCache=[];
 async function loadModelLabel(){
+  // Load from gateway routes
+  const routes=await api.get('/api/gateway/routes');
+  const enabled=(routes||[]).filter(r=>r.enabled);
+  modelCache=enabled;
+  // Also check old provider for label
   const provs=await api.get('/api/providers');
   const active=provs.find(p=>p.isActive);
   if(active){
     document.getElementById('modelLabel').textContent=active.selectedModelId||'select model';
     S.activeProviderId=active.id;
+  } else if(enabled.length){
+    document.getElementById('modelLabel').textContent=enabled[0].displayId;
   }
 }
 async function toggleModelDropdown(){
   const dd=document.getElementById('modelDropdown');
   if(dd.style.display!=='none'){dd.style.display='none';return}
-  if(!S.activeProviderId){await loadModelLabel()}
-  if(!S.activeProviderId)return;
   if(!modelCache.length){
-    try{modelCache=await api.get('/api/providers/'+S.activeProviderId+'/models')||[]}catch(e){modelCache=[]}
+    const routes=await api.get('/api/gateway/routes');
+    modelCache=(routes||[]).filter(r=>r.enabled);
   }
   const current=document.getElementById('modelLabel').textContent;
-  dd.innerHTML=modelCache.map(m=>`<div class="model-opt${m.id===current?' active':''}" onclick="selectModel('${m.id}')">${m.id}</div>`).join('')||'<div class="model-opt" style="color:var(--text-secondary)">No models</div>';
+  dd.innerHTML=modelCache.map(m=>`<div class="model-opt${m.displayId===current?' active':''}" onclick="selectModel('${m.displayId}')">${m.displayId}</div>`).join('')||'<div class="model-opt" style="color:var(--text-secondary)">No models — configure in Settings → Providers</div>';
   dd.style.display='block';
   const close=e=>{if(!dd.contains(e.target)&&e.target.id!=='modelBtn'){dd.style.display='none';document.removeEventListener('click',close)}};
   setTimeout(()=>document.addEventListener('click',close),0);
@@ -629,6 +635,7 @@ async function toggleModelDropdown(){
 async function selectModel(id){
   document.getElementById('modelDropdown').style.display='none';
   document.getElementById('modelLabel').textContent=id;
+  // Update active provider's selectedModelId so the backend uses it
   if(S.activeProviderId){
     await api.put('/api/providers/'+S.activeProviderId,{selectedModelId:id});
   }
@@ -706,203 +713,103 @@ function settingsTab(name){
 
 async function renderProviderSettings(){
   const body=document.getElementById('settingsBody');
-  const providers=await api.get('/api/providers');
+  const providers=await api.get('/api/gateway/providers');
+  const routes=await api.get('/api/gateway/routes');
   body.innerHTML=`
-    <div id="provList">${providers.map(p=>`
-      <div class="prov-item${p.isActive?' active':''}" onclick="activateProvider('${p.id}')">
-        <div><div class="prov-label">${esc(p.label||p.builtinId||'Provider')}</div>
-        <div class="prov-model">${esc(p.selectedModelId||'no model')}${p.isActive?' <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>':''}</div></div>
-        <div class="prov-actions">
-          <button onclick="event.stopPropagation();editProvider('${p.id}')">Edit</button>
-          <button onclick="event.stopPropagation();deleteProvider('${p.id}')">Del</button>
+    <div id="gwProvList">${(providers||[]).map(p=>`
+      <div class="prov-item" style="flex-direction:column;align-items:stretch">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div class="prov-label">${esc(p.name)}</div>
+            <div class="prov-model">${esc(p.apiBase)} · Key: ${p.apiKey?'✓':'✗'}</div>
+          </div>
+          <div class="prov-actions" style="display:flex;gap:6px;align-items:center">
+            <label style="font-size:12px"><input type="checkbox" ${p.enabled?'checked':''} onchange="gwToggleProvider('${esc(p.name)}',this.checked)"> On</label>
+            <button onclick="gwDiscover('${esc(p.name)}')">Discover</button>
+            <button onclick="gwDeleteProvider('${esc(p.name)}')">Del</button>
+          </div>
         </div>
-      </div>`).join('')}
+        <div id="gw_routes_${esc(p.name)}" style="margin-top:8px;padding-left:12px;font-size:12px">
+          ${(routes||[]).filter(rt=>rt.provider===p.name).map(rt=>`
+            <div style="display:flex;align-items:center;gap:8px;padding:3px 0">
+              <label><input type="checkbox" ${rt.enabled?'checked':''} onchange="gwToggleRoute('${esc(rt.displayId)}',this.checked)"></label>
+              <span style="flex:1">${esc(rt.displayId)}</span>
+              <button style="font-size:11px;padding:2px 6px" onclick="gwDeleteRoute('${esc(rt.displayId)}')">×</button>
+            </div>`).join('')||'<em style="color:var(--text-secondary)">No routes — click Discover</em>'}
+        </div>
+      </div>`).join('')||'<em>No providers configured</em>'}
     </div>
-    <button class="btn-primary" onclick="editProvider()" style="margin-top:12px">+ Add Provider</button>
-    <div id="provEditor" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid var(--outline)">
-      <input type="hidden" id="pe_id">
-      <div class="field"><label>Label</label><input id="pe_label" placeholder="My Provider"></div>
-      <div class="field"><label>API Base URL</label><input id="pe_base" placeholder="https://api.openai.com/v1"></div>
-      <div class="field"><label>API Key</label><input id="pe_key" type="password" placeholder="sk-..."></div>
-      <div class="field"><label>Model</label>
-        <div style="display:flex;gap:8px"><input id="pe_model" placeholder="gpt-4o" style="flex:1">
-        <button class="btn-primary" onclick="loadModels()" style="padding:8px 12px;font-size:12px">Load</button></div>
-        <select id="pe_models" style="margin-top:6px;display:none" onchange="document.getElementById('pe_model').value=this.value"></select>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:12px">
-        <button class="btn-primary" onclick="saveProvider()">Save</button>
-        <button class="btn-primary" onclick="saveAndActivate()" style="background:var(--success)">Save & Activate</button>
-      </div>
+    <button class="btn-primary" onclick="gwShowAddProvider()" style="margin-top:12px">+ Add Provider</button>
+    <div id="gwAddForm" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid var(--outline)">
+      <div class="field"><label>Name</label><input id="gw_name" placeholder="my-provider"></div>
+      <div class="field"><label>API Base URL</label><input id="gw_base" placeholder="https://api.openai.com/v1"></div>
+      <div class="field"><label>API Key</label><input id="gw_key" type="password" placeholder="sk-..."></div>
+      <button class="btn-primary" onclick="gwSaveProvider()" style="margin-top:8px">Save</button>
     </div>
-    <div id="modelConfigPanel" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid var(--outline)">
-      <h4 style="margin:0 0 12px">Model Config</h4>
-      <div id="mcFields"></div>
+    <div id="gwDiscoverPanel" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid var(--outline)">
+      <h4 style="margin:0 0 8px">Discovered Models <span id="gwDiscoverName"></span></h4>
+      <div id="gwDiscoverList"></div>
+      <button class="btn-primary" onclick="gwEnableSelected()" style="margin-top:8px">Enable Selected</button>
     </div>`;
 }
 
-let editingProvider=null;
-async function editProvider(id){
-  const editor=document.getElementById('provEditor');
-  editor.style.display='block';
-  const mcp=document.getElementById('modelConfigPanel');
-  if(id){
-    const providers=await api.get('/api/providers');
-    editingProvider=providers.find(p=>p.id===id);
-    if(editingProvider){
-      document.getElementById('pe_id').value=id;
-      document.getElementById('pe_label').value=editingProvider.label||'';
-      document.getElementById('pe_base').value=editingProvider.apiBase||'';
-      document.getElementById('pe_key').value=editingProvider.apiKey||'';
-      document.getElementById('pe_model').value=editingProvider.selectedModelId||'';
-      renderModelConfig();
-      mcp.style.display='block';
-    }
-  }else{
-    editingProvider=null;
-    document.getElementById('pe_id').value='';
-    document.getElementById('pe_label').value='';
-    document.getElementById('pe_base').value='';
-    document.getElementById('pe_key').value='';
-    document.getElementById('pe_model').value='';
-    mcp.style.display='none';
-  }
-}
+function gwShowAddProvider(){document.getElementById('gwAddForm').style.display='block'}
 
-function renderModelConfig(){
-  if(!editingProvider)return;
-  const mid=document.getElementById('pe_model').value;
-  if(!mid){document.getElementById('mcFields').innerHTML='<em>Select a model first</em>';return}
-  const configs=editingProvider.modelConfigs||{};
-  const mc=configs[mid]||{modelId:mid,contextTokens:128000,temperature:0.6,autoCompact:true};
-
-  const TOKEN_STEPS=[0,256,512,1024,2048,4096,8192,16000,32000,64000,128000,200000,500000,1000000];
-  const CTX_STEPS=[1000,2000,4000,8000,16000,32000,64000,128000,200000,256000,384000,500000,750000,1000000,2000000];
-  const reasoningOpts=['off','low','medium','high','auto'];
-
-  function stepIdx(steps,val){if(!val)return 0;let i=steps.findIndex(s=>s>=val);return i<0?steps.length-1:i}
-  function fmtK(v){return v>=1000000?(v/1000000)+'M':v>=1000?(v/1000)+'K':v.toString()}
-
-  const tempVal=mc.temperature!=null?mc.temperature:0;
-  const toppVal=mc.topP!=null?mc.topP:0;
-  const topkVal=mc.topK!=null?mc.topK:0;
-  const maxTokIdx=stepIdx(TOKEN_STEPS,mc.maxTokens||0);
-  const ctxIdx=stepIdx(CTX_STEPS,mc.contextTokens||128000);
-  const reasonIdx=Math.max(0,reasoningOpts.indexOf(mc.reasoningEffort||'off'));
-
-  document.getElementById('mcFields').innerHTML=`
-    <div class="section-label">Abilities</div>
-    <div class="toggle-row">
-      <label><input type="checkbox" id="mc_auto" ${mc.toolsOverride==null&&mc.visionOverride==null?'checked':''} onchange="document.getElementById('mc_overrides').style.display=this.checked?'none':'flex';updateMC()"> Auto-detect</label>
-      <label><input type="checkbox" id="mc_compact" ${mc.autoCompact!==false?'checked':''} onchange="updateMC()"> Auto-Compact</label>
-    </div>
-    <div class="toggle-row" id="mc_overrides" style="display:${mc.toolsOverride==null&&mc.visionOverride==null?'none':'flex'}">
-      <label><input type="checkbox" id="mc_tools" ${mc.toolsOverride!==false?'checked':''} onchange="updateMC()"> Tool Calling</label>
-      <label><input type="checkbox" id="mc_vision" ${mc.visionOverride?'checked':''} onchange="updateMC()"> Vision</label>
-    </div>
-
-    <div class="section-label">Reasoning</div>
-    <div class="slider-row"><label>Effort</label>
-      <input type="range" id="mc_reasoning" min="0" max="4" step="1" value="${reasonIdx}" oninput="document.getElementById('mc_reason_val').textContent=['off','low','medium','high','auto'][this.value];updateMC()">
-      <span class="slider-val" id="mc_reason_val">${reasoningOpts[reasonIdx]}</span></div>
-
-    <div class="section-label">Parameters</div>
-    <div class="slider-row"><label>Temperature</label>
-      <input type="range" id="mc_temp" min="0" max="2" step="0.05" value="${tempVal}" oninput="document.getElementById('mc_temp_val').textContent=this.value<=0?'off':parseFloat(this.value).toFixed(2);updateMC()">
-      <span class="slider-val" id="mc_temp_val">${tempVal<=0?'off':tempVal.toFixed(2)}</span></div>
-    <div class="slider-row"><label>Top-P</label>
-      <input type="range" id="mc_topp" min="0" max="1" step="0.05" value="${toppVal}" oninput="document.getElementById('mc_topp_val').textContent=this.value<=0?'off':parseFloat(this.value).toFixed(2);updateMC()">
-      <span class="slider-val" id="mc_topp_val">${toppVal<=0?'off':toppVal.toFixed(2)}</span></div>
-    <div class="slider-row"><label>Top-K</label>
-      <input type="range" id="mc_topk" min="0" max="200" step="1" value="${topkVal}" oninput="document.getElementById('mc_topk_val').textContent=this.value==0?'off':this.value;updateMC()">
-      <span class="slider-val" id="mc_topk_val">${topkVal==0?'off':topkVal}</span></div>
-    <div class="slider-row"><label>Max Tokens</label>
-      <input type="range" id="mc_maxtok" min="0" max="${TOKEN_STEPS.length-1}" step="1" value="${maxTokIdx}" oninput="let s=[${TOKEN_STEPS}];document.getElementById('mc_maxtok_val').textContent=s[this.value]==0?'off':s[this.value]>=1000?(s[this.value]/1000)+'K':s[this.value];updateMC()">
-      <span class="slider-val" id="mc_maxtok_val">${TOKEN_STEPS[maxTokIdx]==0?'off':fmtK(TOKEN_STEPS[maxTokIdx])}</span></div>
-
-    <div class="section-label">Context</div>
-    <div class="slider-row"><label>Context Tokens</label>
-      <input type="range" id="mc_ctx" min="0" max="${CTX_STEPS.length-1}" step="1" value="${ctxIdx}" oninput="let s=[${CTX_STEPS}];document.getElementById('mc_ctx_val').textContent=s[this.value]>=1000000?(s[this.value]/1000000)+'M':s[this.value]>=1000?(s[this.value]/1000)+'K':s[this.value];updateMC()">
-      <span class="slider-val" id="mc_ctx_val">${fmtK(CTX_STEPS[ctxIdx])}</span></div>`;
-}
-
-function updateMC(){
-  if(!editingProvider)return;
-  const mid=document.getElementById('pe_model').value;
-  if(!mid)return;
-  if(!editingProvider.modelConfigs)editingProvider.modelConfigs={};
-  const TOKEN_STEPS=[0,256,512,1024,2048,4096,8192,16000,32000,64000,128000,200000,500000,1000000];
-  const CTX_STEPS=[1000,2000,4000,8000,16000,32000,64000,128000,200000,256000,384000,500000,750000,1000000,2000000];
-  const reasoningOpts=['off','low','medium','high','auto'];
-  const temp=parseFloat(document.getElementById('mc_temp').value);
-  const topp=parseFloat(document.getElementById('mc_topp').value);
-  const topk=parseInt(document.getElementById('mc_topk').value);
-  const maxTokIdx=parseInt(document.getElementById('mc_maxtok').value);
-  const ctxIdx=parseInt(document.getElementById('mc_ctx').value);
-  const reasonIdx=parseInt(document.getElementById('mc_reasoning').value);
-  const reason=reasoningOpts[reasonIdx];
-  editingProvider.modelConfigs[mid]={
-    modelId:mid,
-    contextTokens:CTX_STEPS[ctxIdx]||128000,
-    temperature:temp>0?temp:null,
-    topP:topp>0?topp:null,
-    topK:topk>0?topk:null,
-    maxTokens:TOKEN_STEPS[maxTokIdx]||null,
-    reasoningEffort:reason==='off'?null:reason,
-    toolsOverride:document.getElementById('mc_auto').checked?null:document.getElementById('mc_tools').checked,
-    visionOverride:document.getElementById('mc_auto').checked?null:document.getElementById('mc_vision').checked,
-    autoCompact:document.getElementById('mc_compact').checked,
-  };
-}
-
-async function saveProvider(){
-  const p={
-    id:document.getElementById('pe_id').value,
-    label:document.getElementById('pe_label').value,
-    apiBase:document.getElementById('pe_base').value,
-    apiKey:document.getElementById('pe_key').value,
-    selectedModelId:document.getElementById('pe_model').value,
-    builtinId:'openai',
-    modelConfigs:editingProvider?.modelConfigs||{}
-  };
-  if(p.id){await api.put('/api/providers/'+p.id,p)}
-  else{await api.post('/api/providers',p)}
+async function gwSaveProvider(){
+  const name=document.getElementById('gw_name').value.trim();
+  const apiBase=document.getElementById('gw_base').value.trim();
+  const apiKey=document.getElementById('gw_key').value.trim();
+  if(!name){alert('Name required');return}
+  await api.post('/api/gateway/providers',{name,apiKey,apiBase});
   renderProviderSettings();
 }
 
-async function saveAndActivate(){
-  const id=document.getElementById('pe_id').value;
-  await saveProvider();
-  const providers=await api.get('/api/providers');
-  const target=id||providers[providers.length-1]?.id;
-  if(target)await activateProvider(target);
+async function gwToggleProvider(name,enabled){
+  await api.put('/api/gateway/providers/'+encodeURIComponent(name),{enabled});
 }
 
-async function activateProvider(id){
-  await api.post('/api/providers/'+id+'/activate');
-  modelCache=[];S.activeProviderId=id;
-  await loadModelLabel();
+async function gwDeleteProvider(name){
+  if(!confirm('Delete provider '+name+'?'))return;
+  await api.del('/api/gateway/providers/'+encodeURIComponent(name));
   renderProviderSettings();
 }
 
-async function deleteProvider(id){
-  await api.del('/api/providers/'+id);
+async function gwToggleRoute(displayId,enabled){
+  await api.put('/api/gateway/routes/'+encodeURIComponent(displayId),{enabled});
+}
+
+async function gwDeleteRoute(displayId){
+  await api.del('/api/gateway/routes/'+encodeURIComponent(displayId));
   renderProviderSettings();
 }
 
-async function loadModels(){
-  const id=document.getElementById('pe_id').value;
-  if(!id){alert('Save the provider first');return}
-  const sel=document.getElementById('pe_models');
-  sel.style.display='block';sel.innerHTML='<option>Loading...</option>';
+let gwDiscoverTarget='';
+async function gwDiscover(name){
+  gwDiscoverTarget=name;
+  const panel=document.getElementById('gwDiscoverPanel');
+  panel.style.display='block';
+  document.getElementById('gwDiscoverName').textContent='('+name+')';
+  document.getElementById('gwDiscoverList').innerHTML='<em>Loading...</em>';
   try{
-    const models=await api.get('/api/providers/'+id+'/models');
-    cachedModels=models;
-    sel.innerHTML=models.sort((a,b)=>a.id.localeCompare(b.id)).map(m=>`<option value="${m.id}">${m.id}</option>`).join('');
-  }catch(e){sel.innerHTML='<option>Error loading models</option>'}
+    const r=await api.post('/api/gateway/providers/'+encodeURIComponent(name)+'/discover');
+    const models=await r.json();
+    if(!models||!models.length){document.getElementById('gwDiscoverList').innerHTML='<em>No models found</em>';return}
+    document.getElementById('gwDiscoverList').innerHTML=models.sort().map(m=>
+      `<label style="display:block;padding:2px 0;font-size:12px"><input type="checkbox" value="${esc(m)}" checked> ${esc(m)}</label>`
+    ).join('');
+  }catch(e){document.getElementById('gwDiscoverList').innerHTML='<em>Error: '+esc(e.message||'failed')+'</em>'}
 }
 
-// Refresh model config when model selector changes
-document.addEventListener('change',e=>{if(e.target.id==='pe_model'||e.target.id==='pe_models')renderModelConfig()});
+async function gwEnableSelected(){
+  const checks=document.querySelectorAll('#gwDiscoverList input[type=checkbox]:checked');
+  for(const cb of checks){
+    const model=cb.value;
+    const displayId=gwDiscoverTarget+'/'+model;
+    await api.post('/api/gateway/routes',{displayId,provider:gwDiscoverTarget,model});
+  }
+  document.getElementById('gwDiscoverPanel').style.display='none';
+  renderProviderSettings();
+}
 
 const taskDefs=[
   {id:'title',label:'Title Generation',desc:'Auto-generate conversation titles'},

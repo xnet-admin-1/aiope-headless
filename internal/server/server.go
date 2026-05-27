@@ -122,6 +122,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/tools", s.listToolToggles)
 	mux.HandleFunc("PUT /api/tools/{id}", s.setToolToggle)
 
+	// Gateway routes
+	mux.HandleFunc("GET /api/gateway/providers", s.gwListProviders)
+	mux.HandleFunc("POST /api/gateway/providers", s.gwAddProvider)
+	mux.HandleFunc("PUT /api/gateway/providers/{name}", s.gwUpdateProvider)
+	mux.HandleFunc("DELETE /api/gateway/providers/{name}", s.gwDeleteProvider)
+	mux.HandleFunc("POST /api/gateway/providers/{name}/discover", s.gwDiscoverModels)
+	mux.HandleFunc("GET /api/gateway/routes", s.gwListRoutes)
+	mux.HandleFunc("POST /api/gateway/routes", s.gwAddRoute)
+	mux.HandleFunc("PUT /api/gateway/routes/{displayId}", s.gwUpdateRoute)
+	mux.HandleFunc("DELETE /api/gateway/routes/{displayId}", s.gwDeleteRoute)
+
 	// Memories
 	mux.HandleFunc("GET /api/memories", s.listMemories)
 	mux.HandleFunc("POST /api/memories", s.createMemory)
@@ -970,6 +981,113 @@ func (s *Server) fetchModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, models)
+}
+
+// --- Gateway API handlers ---
+
+func (s *Server) gwListProviders(w http.ResponseWriter, r *http.Request) {
+	ps, _ := s.Gateway.Store().ListProviders()
+	if ps == nil {
+		ps = []gateway.ProviderConfig{}
+	}
+	for i := range ps {
+		if len(ps[i].APIKey) > 8 {
+			ps[i].APIKey = ps[i].APIKey[:4] + "****" + ps[i].APIKey[len(ps[i].APIKey)-4:]
+		} else if ps[i].APIKey != "" {
+			ps[i].APIKey = "****"
+		}
+	}
+	writeJSON(w, ps)
+}
+
+func (s *Server) gwAddProvider(w http.ResponseWriter, r *http.Request) {
+	var p gateway.ProviderConfig
+	json.NewDecoder(r.Body).Decode(&p)
+	if p.Name == "" {
+		http.Error(w, "name required", 400)
+		return
+	}
+	p.Enabled = true
+	if err := s.Gateway.AddProvider(&p); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.WriteHeader(201)
+}
+
+func (s *Server) gwUpdateProvider(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	var patch struct {
+		APIKey  string `json:"apiKey"`
+		APIBase string `json:"apiBase"`
+		Enabled *bool  `json:"enabled"`
+	}
+	json.NewDecoder(r.Body).Decode(&patch)
+	if err := s.Gateway.UpdateProvider(name, patch.APIKey, patch.APIBase, patch.Enabled); err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+	w.WriteHeader(204)
+}
+
+func (s *Server) gwDeleteProvider(w http.ResponseWriter, r *http.Request) {
+	s.Gateway.RemoveProvider(r.PathValue("name"))
+	w.WriteHeader(204)
+}
+
+func (s *Server) gwDiscoverModels(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	models, err := s.Gateway.DiscoverModels(name)
+	if err != nil {
+		http.Error(w, err.Error(), 502)
+		return
+	}
+	writeJSON(w, models)
+}
+
+func (s *Server) gwListRoutes(w http.ResponseWriter, r *http.Request) {
+	routes, _ := s.Gateway.Store().ListRoutes()
+	if routes == nil {
+		routes = []gateway.ModelRoute{}
+	}
+	writeJSON(w, routes)
+}
+
+func (s *Server) gwAddRoute(w http.ResponseWriter, r *http.Request) {
+	var route gateway.ModelRoute
+	json.NewDecoder(r.Body).Decode(&route)
+	if route.DisplayID == "" || route.Provider == "" || route.Model == "" {
+		http.Error(w, "displayId, provider, model required", 400)
+		return
+	}
+	route.Enabled = true
+	if err := s.Gateway.AddRoute(&route); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.WriteHeader(201)
+}
+
+func (s *Server) gwUpdateRoute(w http.ResponseWriter, r *http.Request) {
+	displayID := r.PathValue("displayId")
+	var patch struct {
+		Enabled *bool `json:"enabled"`
+	}
+	json.NewDecoder(r.Body).Decode(&patch)
+	if patch.Enabled == nil {
+		w.WriteHeader(204)
+		return
+	}
+	if err := s.Gateway.UpdateRoute(displayID, *patch.Enabled); err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+	w.WriteHeader(204)
+}
+
+func (s *Server) gwDeleteRoute(w http.ResponseWriter, r *http.Request) {
+	s.Gateway.RemoveRoute(r.PathValue("displayId"))
+	w.WriteHeader(204)
 }
 
 func (s *Server) listToolToggles(w http.ResponseWriter, r *http.Request) {

@@ -96,14 +96,66 @@ func (r *Router) AddRoute(route *ModelRoute) error {
 }
 
 func (r *Router) RemoveProvider(name string) error {
+	r.store.DeleteRoutesByProvider(name)
 	r.store.DeleteProvider(name)
-	if routes, err := r.store.ListRoutes(); err == nil {
-		for _, rt := range routes {
-			if rt.Provider == name {
-				r.store.DeleteRoute(rt.DisplayID)
-			}
-		}
+	r.Reload()
+	return nil
+}
+
+func (r *Router) Store() *Store { return r.store }
+
+func (r *Router) GetProvider(name string) (*ProviderConfig, error) {
+	return r.store.GetProvider(name)
+}
+
+func (r *Router) UpdateRoute(displayID string, enabled bool) error {
+	r.mu.RLock()
+	route, ok := r.routes[displayID]
+	r.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("route not found: %s", displayID)
+	}
+	route.Enabled = enabled
+	if err := r.store.SaveRoute(route); err != nil {
+		return err
 	}
 	r.Reload()
 	return nil
+}
+
+func (r *Router) RemoveRoute(displayID string) error {
+	if err := r.store.DeleteRoute(displayID); err != nil {
+		return err
+	}
+	r.Reload()
+	return nil
+}
+
+func (r *Router) UpdateProvider(name string, apiKey, apiBase string, enabled *bool) error {
+	p, err := r.store.GetProvider(name)
+	if err != nil {
+		return err
+	}
+	if apiKey != "" && !strings.Contains(apiKey, "****") {
+		p.APIKey = apiKey
+	}
+	if apiBase != "" {
+		p.APIBase = apiBase
+	}
+	if enabled != nil {
+		p.Enabled = *enabled
+	}
+	if err := r.store.SaveProvider(p); err != nil {
+		return err
+	}
+	r.Reload()
+	return nil
+}
+
+func (r *Router) DiscoverModels(name string) ([]string, error) {
+	p, err := r.store.GetProvider(name)
+	if err != nil {
+		return nil, err
+	}
+	return r.store.FetchUpstreamModels(p)
 }
