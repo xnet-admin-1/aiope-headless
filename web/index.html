@@ -765,21 +765,21 @@ async function gwSaveProvider(){
 }
 
 async function gwToggleProvider(name,enabled){
-  await api.put('/api/gateway/providers/'+encodeURIComponent(name),{enabled});
+  await api.put('/api/gateway/providers?name='+encodeURIComponent(name),{enabled});
 }
 
 async function gwDeleteProvider(name){
   if(!confirm('Delete provider '+name+'?'))return;
-  await api.del('/api/gateway/providers/'+encodeURIComponent(name));
+  await api.del('/api/gateway/providers?name='+encodeURIComponent(name));
   renderProviderSettings();
 }
 
 async function gwToggleRoute(displayId,enabled){
-  await api.put('/api/gateway/routes/'+encodeURIComponent(displayId),{enabled});
+  await api.put('/api/gateway/routes?id='+encodeURIComponent(displayId),{enabled});
 }
 
 async function gwDeleteRoute(displayId){
-  await api.del('/api/gateway/routes/'+encodeURIComponent(displayId));
+  await api.del('/api/gateway/routes?id='+encodeURIComponent(displayId));
   renderProviderSettings();
 }
 
@@ -791,7 +791,7 @@ async function gwDiscover(name){
   document.getElementById('gwDiscoverName').textContent='('+name+')';
   document.getElementById('gwDiscoverList').innerHTML='<em>Loading...</em>';
   try{
-    const r=await api.post('/api/gateway/providers/'+encodeURIComponent(name)+'/discover');
+    const r=await api.post('/api/gateway/discover?name='+encodeURIComponent(name));
     const models=await r.json();
     if(!models||!models.length){document.getElementById('gwDiscoverList').innerHTML='<em>No models found</em>';return}
     document.getElementById('gwDiscoverList').innerHTML=models.sort().map(m=>

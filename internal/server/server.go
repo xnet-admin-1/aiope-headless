@@ -125,13 +125,13 @@ func (s *Server) Handler() http.Handler {
 	// Gateway routes
 	mux.HandleFunc("GET /api/gateway/providers", s.gwListProviders)
 	mux.HandleFunc("POST /api/gateway/providers", s.gwAddProvider)
-	mux.HandleFunc("PUT /api/gateway/providers/{name}", s.gwUpdateProvider)
-	mux.HandleFunc("DELETE /api/gateway/providers/{name}", s.gwDeleteProvider)
-	mux.HandleFunc("POST /api/gateway/providers/{name}/discover", s.gwDiscoverModels)
+	mux.HandleFunc("PUT /api/gateway/providers", s.gwUpdateProvider)
+	mux.HandleFunc("DELETE /api/gateway/providers", s.gwDeleteProvider)
+	mux.HandleFunc("POST /api/gateway/discover", s.gwDiscoverModels)
 	mux.HandleFunc("GET /api/gateway/routes", s.gwListRoutes)
 	mux.HandleFunc("POST /api/gateway/routes", s.gwAddRoute)
-	mux.HandleFunc("PUT /api/gateway/routes/{displayId}", s.gwUpdateRoute)
-	mux.HandleFunc("DELETE /api/gateway/routes/{displayId}", s.gwDeleteRoute)
+	mux.HandleFunc("PUT /api/gateway/routes", s.gwUpdateRoute)
+	mux.HandleFunc("DELETE /api/gateway/routes", s.gwDeleteRoute)
 
 	// Memories
 	mux.HandleFunc("GET /api/memories", s.listMemories)
@@ -1016,7 +1016,7 @@ func (s *Server) gwAddProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) gwUpdateProvider(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
+	name := r.URL.Query().Get("name")
 	var patch struct {
 		APIKey  string `json:"apiKey"`
 		APIBase string `json:"apiBase"`
@@ -1031,12 +1031,12 @@ func (s *Server) gwUpdateProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) gwDeleteProvider(w http.ResponseWriter, r *http.Request) {
-	s.Gateway.RemoveProvider(r.PathValue("name"))
+	s.Gateway.RemoveProvider(r.URL.Query().Get("name"))
 	w.WriteHeader(204)
 }
 
 func (s *Server) gwDiscoverModels(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
+	name := r.URL.Query().Get("name")
 	models, err := s.Gateway.DiscoverModels(name)
 	if err != nil {
 		http.Error(w, err.Error(), 502)
@@ -1069,7 +1069,7 @@ func (s *Server) gwAddRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) gwUpdateRoute(w http.ResponseWriter, r *http.Request) {
-	displayID := r.PathValue("displayId")
+	displayID := r.URL.Query().Get("id")
 	var patch struct {
 		Enabled *bool `json:"enabled"`
 	}
@@ -1086,7 +1086,7 @@ func (s *Server) gwUpdateRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) gwDeleteRoute(w http.ResponseWriter, r *http.Request) {
-	s.Gateway.RemoveRoute(r.PathValue("displayId"))
+	s.Gateway.RemoveRoute(r.URL.Query().Get("id"))
 	w.WriteHeader(204)
 }
 
