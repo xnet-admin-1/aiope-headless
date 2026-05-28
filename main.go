@@ -49,12 +49,13 @@ func main() {
 	var model string
 	if active := provSvc.GetActive(); active != nil {
 		// Try gateway resolution first
-		if oai, _, err := gwRouter.Resolve(active.SelectedModelID); err == nil {
+		if oai, resolvedModel, err := gwRouter.Resolve(active.SelectedModelID); err == nil {
+			model = resolvedModel
 			prov = oai
 		} else {
 			prov = &llm.OpenAI{APIKey: active.APIKey, APIBase: active.APIBase}
 		}
-		model = active.SelectedModelID
+		if model == "" { model = active.SelectedModelID }
 	}
 	if prov == nil {
 		prov = &llm.OpenAI{}
